@@ -18,9 +18,14 @@ library(reshape2)
 
 ```{r cache=FALSE, include=FALSE}
 powerhouse <- read.csv("elektrownie.csv", row.names=1)
+#1/2/2012 2:00
+powerhouse$data <- strptime("1/2/2012 2:00", "%d/%m/%Y %k:%M")
+filter(powerhouse, -data, -anno)
 set.seed(23)
-stats <- t(apply(powerhouse, 2, range))
-colnames(stats) <- c("min", "max")
+stats <- t(apply(powerhouse, 2, function(x) {
+      c(min = min(x), max = max(x), mean = mean(x, na.rm = TRUE), class = class(x))
+}))
+colnames(stats) <- c("min", "max", "mean", "class")
 ```
 ## Wstêp
 
