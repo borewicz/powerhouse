@@ -9,25 +9,66 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r library, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(reshape2)
+```
+
 ```{r cache=FALSE, include=FALSE}
 powerhouse <- read.csv("elektrownie.csv", row.names=1)
+set.seed(23)
+stats <- t(apply(powerhouse, 2, range))
+colnames(stats) <- c("min", "max")
 ```
-## WstÄ™p
+## Wstêp
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+Niniejszy dokument ma na celu analizê danych pochodzacych z czujników umieszczonych przy panelach fotowoltanicznych (krócej mówi¹c: s³onecznych). Na pocz¹tku dane te nale¿a³o przetworzyæ pod k¹tem ewentualnych brakuj¹cych/nadmiarowych danych, nastêpnie nale¿a³o wskazaæ znaczenie i wagê poszczególnych atrybutów, a tak¿e sprawdziæ korelacjê miêdzy nimi. Ostatni¹ czêœci¹ projektu by³o opracowanie regresora przewiduj¹cego wytwarzan¹ energiê przez ka¿dy z paneli w ujêciu godzinowym.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## W³aœciwoœci zbioru
 
-```{r cars}
-summary(cars)
+Zbiór sk³ada siê z `r nrow(powerhouse)` wierszy oraz `r ncol(powerhouse)` atrybutów, które mo¿na podzieliæ na nastêpuj¹ce grupy:
+
+### Informacje o czujniku
+
+   Pierwsze atrybuty informuj¹ o modelu oraz marce czujnika. Wartoœci te s¹ sta³e dla ka¿dego z `r length(table(powerhouse$idsito))` ró¿nych czujników (co ciekawe, nie s¹ to jednakowe czujniki). Ka¿dy z atrybutów zosta³ znormalizowany do przedzia³u <0, 1>.
+   
+```{r echo=FALSE}
+knitr::kable(head(stats, 3))
 ```
 
-## Including Plots
+### Data wykonania pomiaru
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r echo=FALSE}
+knitr::kable(stats[6:10, ])
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Dane pogodowe
+
+```{r echo=FALSE}
+knitr::kable(stats[11:19, ])
+```
+
+### LISA
+
+```{r echo=FALSE}
+knitr::kable(stats[20:28, ])
+```
+
+### Lokalizacja, azymut i wysokoœæ bezwzglêdna
+
+### PCNM
+
+### modulo
+
+### KWH
+
+## Korelacja miêdzy zmiennymi
+
+```{r corr,echo=FALSE}
+powershell_clean <- select(powerhouse, -data)
+cor_table <- cor(powershell_clean)
+corrplot(cor_table, type = "upper", order = "hclust", 
+          tl.col = "black", tl.srt = 45)
+```
