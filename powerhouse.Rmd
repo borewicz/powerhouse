@@ -16,59 +16,80 @@ library(corrplot)
 library(reshape2)
 ```
 
-```{r cache=FALSE, include=FALSE}
+```{r include=FALSE}
 powerhouse <- read.csv("elektrownie.csv", row.names=1)
 #1/2/2012 2:00
-powerhouse$data <- strptime(powerhouse$data, "%d/%m/%Y %k:%M")
-filter(powerhouse, -data, -anno)
+powerhouse$data <- strptime(powerhouse$data, "%m/%d/%Y %k:%M")
+select(powerhouse, -data, -anno)
 set.seed(23)
 stats <- t(apply(powerhouse, 2, range))
 stats2 <- t(apply(powerhouse, 2, class))
 colnames(stats) <- c("min", "max")
 ```
-## Wst�p
+## Wstęp
 
-Niniejszy dokument ma na celu analiz� danych pochodzacych z czujnik�w umieszczonych przy panelach fotowoltanicznych (kr�cej m�wi�c: s�onecznych). Na pocz�tku dane te nale�a�o przetworzy� pod k�tem ewentualnych brakuj�cych/nadmiarowych danych, nast�pnie nale�a�o wskaza� znaczenie i wag� poszczeg�lnych atrybut�w, a tak�e sprawdzi� korelacj� mi�dzy nimi. Ostatni� cz�ci� projektu by�o opracowanie regresora przewiduj�cego wytwarzan� energi� przez ka�dy z paneli w uj�ciu godzinowym.
+Niniejszy dokument ma na celu analizę danych pochodzacych z czujników umieszczonych przy panelach fotowoltanicznych (krócej mówiąc: słonecznych). Na początku dane te należało przetworzyć pod kątem ewentualnych brakujących/nadmiarowych danych, następnie należało wskazać znaczenie i wagę poszczególnych atrybutów, a także sprawdzić korelację między nimi. Ostatnią częścią projektu było opracowanie regresora przewidującego wytwarzaną energię przez każdy z paneli w ujęciu godzinowym.
 
-## W�a�ciwo�ci zbioru
+## Właściwości zbioru
 
-Zbi�r sk�ada si� z `r nrow(powerhouse)` wierszy oraz `r ncol(powerhouse)` atrybut�w, kt�re mo�na podzieli� na nast�puj�ce grupy:
+Zbiór składa się z `r nrow(powerhouse)` wierszy oraz `r ncol(powerhouse)` atrybutów, które można podzielić na następujące grupy:
 
 ### Informacje o czujniku
 
-   Pierwsze atrybuty informuj� o modelu oraz marce czujnika. Warto�ci te s� sta�e dla ka�dego z `r length(table(powerhouse$idsito))` r�nych czujnik�w (co ciekawe, nie s� to jednakowe czujniki). Ka�dy z atrybut�w zosta� znormalizowany do przedzia�u <0, 1>.
+Pierwsze atrybuty informują o modelu, marce oraz wieku czujnika. Wartości te są stałe dla każdego z `r length(table(powerhouse$idsito))` różnych czujników (wynika to z liczby różnych wartości atrybutu _idsito_). Czujniki te nie są identyczne - niektóre mają tą samą markę (_idbrand_), ale inny model (_idmodel_). Dodatkowo dostępny jest parametr _ageinmonths_, wskazujący na wiek urządzenia w miesiącach. Każdy z atrybutów został znormalizowany do przedziału <0, 1>, przy czym prawie żaden z atrybutów nie osiąga wartości maksymalnej - co może wskazywać, że czujników było więcej lub został użyty nietypowy algorytm normalizacji (np. dla łańcuchów znaków). Odstępstwem od tej reguły jest wiek urządzenia, który zapewne został znormalizowany z typu numerycznego.
    
 ```{r echo=FALSE}
-knitr::kable(head(stats, 3))
+knitr::kable(stats[c(1:3,6), ])
 ```
 
 ### Data wykonania pomiaru
 
+Kolejna grupa atrybutów zawiera informacje o czasie wykonania pomiaru. Atrybut _anno_ jest typu _numeric_ i przyjmuje tylko wartości 2012 oraz 2013. Parametr _day_ określa dzień roku i przyjmuje `r length(table(powerhouse$day))` różnych wartości, natomiast _ora_ oznacza godzinę wykonania pomiaru. Pomiary wykonywane są co godzinę, `r length(table(powerhouse$ora))` razy na dobę, co sugeruje zarówno zmienna _ora_, jak i pole _data_ będące łańcuchem (typ _factor_) wskazującym datę i godzinę pomiaru w formacie przystępnym dla przeciętnego zjadacza chleba. Pozostałe wartości zostały znormalizowane do przedziału <0, 1>.
+
 ```{r echo=FALSE}
-knitr::kable(stats[6:10, ])
+knitr::kable(stats[7:10, ])
 ```
 
 ### Dane pogodowe
 
+Ta grupa zawiera istotne dla modelu predykcji produkcji energii dane o pogodzie. Do dyspozycji są tu informacje o: temperaturze otoczenia, naświetleniu, ciśnieniu powietrza, prędkości wiatru, wilgotności, temperatury punktu rosy, kierunku wiatru oraz zachmurzenia. Obecność atrybutu _icon_ każe przypuszczać, że dane te mogą pochodzić z usługi online udostępniającej informacje o pogodzie - prawdopodobnie przed normalizacją wskazywał na ikonę, którą portal informował o obecnej pogodzie w danym regionie (tym bardziej, że wskazuje ona tylko `r length(table(powerhouse$icon))` różnych wartości). Wyjątkiem jest w tym przypadku nasłonecznienie, gdzie istnieją dwie wartości: jedna może pochodzić z czujnika, a druga z usługi _PVGIS_.
+
 ```{r echo=FALSE}
-knitr::kable(stats[11:19, ])
+knitr::kable(stats[c(11,48,12:15,17:19,16), ])
 ```
 
+### Lokalizacja, azymut i wysokość bezwzględna
+
+Oprócz standardowych właściwości takich jak długość (_lon_) i szerokość (_lat_) mamy tutaj rzadziej spotykane atrybuty przydatne w lokalizowaniu miejsca działania każdego z czujników. Zmienna _azimuth_ określa tzw. azymut, czyli kąt między pomiędzy południkiem a  wskazanym kierunkiem poziomym, z kolei _altitude_ to zwyczajna wysokość bezględna określająca wysokość nad poziomem morza. Oba atrybuty pozwalają na ustalenie pozycji słońca względem czujnika. 
+
+```{r echo=FALSE}
+knitr::kable(stats[c(4:5, 29:30), ])
+```
+
+### Wektor PCNM
+
+Nazwa atrybutów w tej grupie wskazuje na ich występowanie jako argumenty algorytmu analizy współrzędnych głównych macierzy sąsiedztwa (ang. _principal coordinate analysis of neighbour_, w skrócie _PCNM_). Technika ta umożliwia rozwiązanie problemu autokorelacji przestrzennej wywołanej bliskością czujników, co jest niepożądane w przypadku tworzenia modelu predykcji produkcji energii. Przy takim założeniu wartości atrybutu stanowią tzw. wektory własne opisujące przestrzeń, obliczone na podstawie macierzy odległości między panelami.
+
+```{r echo=FALSE}
+knitr::kable(stats[33:47, ])
+```
 ### LISA
 
+Ta grupa atrybutów zawiera atrybuty podobne do tych z danych pogodowych oraz lokalizacji (oprócz właściwości _icon_), jednak z dodatkowym oznaczeniem _i_. Litera ta, przy jednoczesnym występowaniu wektora PCNM, może wskazywać na użycie algorytmu LISA (ang. _Local Indicator of Spatial Association_) obliczające na podstawie wektora własnego PCNM lokalne statystyki, wolne od problemu autokorelacji przestrzennej.
+
 ```{r echo=FALSE}
-knitr::kable(stats[20:28, ])
+knitr::kable(stats[c(20:27, 31:32, 49), ])
 ```
 
-### Lokalizacja, azymut i wysoko�� bezwzgl�dna
+### Ilość energii wytworzonej oraz _dist_
 
-### PCNM
+Ostatnim atrybutem jest zmienna wskazująca na ilość wytworzonej energii. Nie wiadomo jednak, czy jest to wartość pochodząca z czujnika , czy wartość wyliczona na podstawie modelu predykcji, na co wskazują inne kolumny występujace w zbiorze (wtedy zbiór możnaby określić zbiorem uczącym np. sieć neuronową). Opcja druga jest bardziej prawdopodobna, jeżeli spojrzymy na zmienną _dist_ - ponieważ wartość ta ma dużo większą dokładność niż pozostałe atrybuty w zbiorze, prawdopodobnie jest obliczana na podstawie danych z tego zbioru. Najprawdopodobnie więc wartość jest formą jakiejś statystyki wykorzystywanej przez model predykcji, zwiększającej jakość predykcji. 
 
-### modulo
+```{r echo=FALSE}
+knitr::kable(stats[c(28,50), ])
+```
 
-### KWH
-
-## Korelacja mi�dzy zmiennymi
+## Korelacja między zmiennymi
 
 ```{r corr,echo=FALSE}
 powershell_clean <- select(powerhouse, -data)
