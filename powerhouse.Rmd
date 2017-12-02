@@ -14,18 +14,19 @@ library(ggplot2)
 library(dplyr)
 library(corrplot)
 library(reshape2)
+library(lubridate)
 ```
 
-```{r include=FALSE}
+```{r preparing, cache=FALSE, include=FALSE}
 powerhouse <- read.csv("elektrownie.csv", row.names=1)
-#1/2/2012 2:00
-powerhouse$data <- strptime(powerhouse$data, "%m/%d/%Y %k:%M")
-select(powerhouse, -data, -anno)
+powerhouse$data <- as.POSIXct(strptime(powerhouse$data, "%m/%d/%Y %k:%M"))
+powerhouse <- powerhouse %>% mutate(data_month = month(data))
+powerhouse <- powerhouse %>% group_by(idsito, anno, data_month, ora) %>% mutate(kwh = ifelse(kwh == 0, mean(kwh), kwh))
+powerhouse <- powerhouse %>% group_by(idsito, anno, data_month) %>% mutate(irradiamento = ifelse(irradiamento == 0 && kwh > 0, mean(irradiamento), irradiamento))
+
 set.seed(23)
-stats <- t(apply(powerhouse, 2, range))
-stats2 <- t(apply(powerhouse, 2, class))
-colnames(stats) <- c("min", "max")
 ```
+
 ## Wstęp
 
 Niniejszy dokument ma na celu analizę danych pochodzacych z czujników umieszczonych przy panelach fotowoltanicznych (krócej mówiąc: słonecznych). Na początku dane te należało przetworzyć pod kątem ewentualnych brakujących/nadmiarowych danych, następnie należało wskazać znaczenie i wagę poszczególnych atrybutów, a także sprawdzić korelację między nimi. Ostatnią częścią projektu było opracowanie regresora przewidującego wytwarzaną energię przez każdy z paneli w ujęciu godzinowym.
@@ -33,6 +34,12 @@ Niniejszy dokument ma na celu analizę danych pochodzacych z czujników umieszcz
 ## Właściwości zbioru
 
 Zbiór składa się z `r nrow(powerhouse)` wierszy oraz `r ncol(powerhouse)` atrybutów, które można podzielić na następujące grupy:
+
+```{r stats, include=FALSE}
+stats <- t(apply(powerhouse, 2, range))
+stats2 <- t(apply(powerhouse, 2, class))
+colnames(stats) <- c("min", "max")
+```
 
 ### Informacje o czujniku
 
@@ -52,7 +59,7 @@ knitr::kable(stats[7:10, ])
 
 ### Dane pogodowe
 
-Ta grupa zawiera istotne dla modelu predykcji produkcji energii dane o pogodzie. Do dyspozycji są tu informacje o: temperaturze otoczenia, naświetleniu, ciśnieniu powietrza, prędkości wiatru, wilgotności, temperatury punktu rosy, kierunku wiatru oraz zachmurzenia. Obecność atrybutu _icon_ każe przypuszczać, że dane te mogą pochodzić z usługi online udostępniającej informacje o pogodzie - prawdopodobnie przed normalizacją wskazywał na ikonę, którą portal informował o obecnej pogodzie w danym regionie (tym bardziej, że wskazuje ona tylko `r length(table(powerhouse$icon))` różnych wartości). Wyjątkiem jest w tym przypadku nasłonecznienie, gdzie istnieją dwie wartości: jedna może pochodzić z czujnika, a druga z usługi _PVGIS_.
+Ta grupa zawiera istotne dla modelu predykcji produkcji energii dane o pogodzie. Do dyspozycji są tu informacje o: temperaturze otoczenia, naświetleniu, ciśnieniu powietrza, prędkości wiatru, wilgotności, temperatury punktu rosy, kierunku wiatru oraz zachmurzenia. Obecność atrybutu _icon_ każe przypuszczać, że dane te mogą pochodzić z usługi online udostępniającej informacje o pogodzie - prawdopodobnie przed normalizacją wskazywał na ikonę, którą portal informował o obecnej pogodzie w danym regionie (tym bardziej, że wskazuje ona tylko `r length(table(powerhouse$icon))` różnych wartości). Wyjątkiem jest w tym przypadku nasłonecznienie, gdzie istnieją dwie wartości: jedna może pochodzić z czujnika, a druga z usługi _PVGIS_. Skąd takie rozróżnienie? Czujnik może z czasem przestać działać bądź jego pomiary mogą być zakłócone np. wskutek zabrudzenia.
 
 ```{r echo=FALSE}
 knitr::kable(stats[c(11,48,12:15,17:19,16), ])
@@ -73,6 +80,7 @@ Nazwa atrybutów w tej grupie wskazuje na ich występowanie jako argumenty algor
 ```{r echo=FALSE}
 knitr::kable(stats[33:47, ])
 ```
+
 ### LISA
 
 Ta grupa atrybutów zawiera atrybuty podobne do tych z danych pogodowych oraz lokalizacji (oprócz właściwości _icon_), jednak z dodatkowym oznaczeniem _i_. Litera ta, przy jednoczesnym występowaniu wektora PCNM, może wskazywać na użycie algorytmu LISA (ang. _Local Indicator of Spatial Association_) obliczające na podstawie wektora własnego PCNM lokalne statystyki, wolne od problemu autokorelacji przestrzennej.
@@ -83,15 +91,29 @@ knitr::kable(stats[c(20:27, 31:32, 49), ])
 
 ### Ilość energii wytworzonej oraz _dist_
 
-Ostatnim atrybutem jest zmienna wskazująca na ilość wytworzonej energii. Nie wiadomo jednak, czy jest to wartość pochodząca z czujnika , czy wartość wyliczona na podstawie modelu predykcji, na co wskazują inne kolumny występujace w zbiorze (wtedy zbiór możnaby określić zbiorem uczącym np. sieć neuronową). Opcja druga jest bardziej prawdopodobna, jeżeli spojrzymy na zmienną _dist_ - ponieważ wartość ta ma dużo większą dokładność niż pozostałe atrybuty w zbiorze, prawdopodobnie jest obliczana na podstawie danych z tego zbioru. Najprawdopodobnie więc wartość jest formą jakiejś statystyki wykorzystywanej przez model predykcji, zwiększającej jakość predykcji. 
+Ostatnim atrybutem jest zmienna wskazująca na ilość wytworzonej energii. Nie wiadomo jednak, czy jest to wartość pochodząca z czujnika, czy wartość wyliczona na podstawie modelu predykcji, na co wskazują inne kolumny występujace w zbiorze (wtedy zbiór możnaby określić zbiorem uczącym np. sieć neuronową). Opcja druga jest bardziej prawdopodobna, jeżeli spojrzymy na zmienną _dist_ - ponieważ wartość ta ma dużo większą dokładność niż pozostałe atrybuty w zbiorze, prawdopodobnie jest obliczana na podstawie danych z tego zbioru. Najprawdopodobnie więc wartość jest formą jakiejś statystyki wykorzystywanej przez model predykcji, zwiększającej jakość predykcji. 
 
 ```{r echo=FALSE}
 knitr::kable(stats[c(28,50), ])
 ```
 
+## Przygotowanie danych 
+
+W trakcie testów okazało się, że w wielu przypadkach wystepowały wartości zerowe na atrybutach potencjalne ważnych dla późniejszej analizy i tworzenia regresora - mowa tu mianowicie o atrybutach _kwh_ oraz _irradiamento_ (naświetlenie). Aby zapewnić, że analiza przebiegnie prawidłowo, brakujące wartości należało uzupełnić.
+
+Kwestia ta była o tyle trudniejsza, że wartości zerowe na właściwości _kwh_ wcale nie musiały być błędne - mogły wynikać z faktu, że ilość światła była zbyt mała, aby wyprodukować jakąkolwiek energię (np. w nocy). W związku z tym należało przyjąć następującą metodologię:
+
+1. Jeżeli wartość _kwh_ jest niezerowa, należy ją zostawić w spokoju.
+2. Jeżeli wartosć _kwh_ jest zerowa, należy wyliczyć średnią dla danego czujnika w ciągu danego miesiąca o danej godzinie i umieścić ją w atrybucie _kwh_.
+
+Oddzielną kwestią jest zmienna określająca naświetlenie - czasem okazywało się, że mimo zerowego naświetlenia istniała dodatnia wartość _kwh_. W tym przypadku zastosowano nieco podobną metodologię do poprzedniej:
+
+1. Jeżeli wartość _irradiance_ jest niezerowa, należy ją zostawić w spokoju.
+2. Jeżeli wartosć _irradiance_ jest zerowa, należy wyliczyć średnią dla danego czujnika w ciągu danego roku i miesiąca, a następnie umieścić ją w atrybucie _irradiance_.
+
 ## Korelacja między zmiennymi
 
-```{r corr,echo=FALSE}
+```{r corr,echo=FALSE,fig.width=20,fig.height=15}
 powershell_clean <- select(powerhouse, -data)
 cor_table <- cor(powershell_clean)
 corrplot(cor_table, type = "upper", order = "hclust", 
