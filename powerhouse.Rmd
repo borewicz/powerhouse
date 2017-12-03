@@ -15,6 +15,8 @@ library(dplyr)
 library(corrplot)
 library(reshape2)
 library(lubridate)
+library(gapminder)
+library(gganimate)
 ```
 
 ```{r preparing, cache=FALSE, include=FALSE}
@@ -130,6 +132,21 @@ _Wykres 2. Korelacja między zmiennymi. Zauważalna silna korelacja między zmie
 W oparciu o powyższy wykres można zauważyć następujące związki:
 
   * Silna dodania korelacja między atrybutem _kwh_ a właściwościami związanymi z naświetleniem (grupa zmiennych _irradiamento_). Ma to sens, zważywszy na to, że do produkcji energii w panelach słonecznych niezbędna jest energia słoneczna.
-  * Sulna ujemna korelacja między atrybutem _kwh_ a zachmurzeniem (_humidity_). Silne zachmurzenie powoduje, że do paneli dociera mniej światła słonecznego, co równa się niewielkiej liczbie wyprodukowanej energii.
-  * Silna dodatnia korelacja między atrybutem _ora_ (godzina) a azymutem - kąt między kierunkiem północy a kierukiem z którego świeci Słonce róśnie wraz z godziną.
+  <!-- * Silna ujemna korelacja między atrybutem _kwh_ a zachmurzeniem (_humidity_). Silne zachmurzenie powoduje, że do paneli dociera mniej światła słonecznego, co równa się niewielkiej liczbie wyprodukowanej energii. -->
+  * Silna dodatnia korelacja między atrybutem _ora_ (godzina) a azymutem - kąt między kierunkiem północy a kierukiem z którego świeci Słonce rośnie wraz z godziną.
+  
+### Wykres wytwarzania energii w zależności od czasu i lokalizacji czujnika
+
+```{r total_fig,echo=FALSE,fig.show='animate'}
+anim <- ggplot(powerhouse %>% group_by(idsito, anno, data_month) %>% summarise(kwh_sum = sum(kwh)), aes(x = data_month, y = kwh_sum, color = factor(1*idsito, labels=c(1:17)), frame = anno)) + geom_line() + scale_color_discrete(name = "Panel")
+gganimate(anim)
+```
+
+_Wykres 3. _
+
+Powyższy wykres przedstawia sumę wyprodukowanej energii w ciągu miesiąca przez każdy z zainstalowanych paneli. Na jego podstawie można dojść do ciekawych wniosków:
+
+  * Na wykresie z roku 2012 _panel nr 12_ wykazuje dużą produkcję energii w stosunku do reszty paneli. Jeżeli przyjrzeć się dokładniej, od sierpnia sumy wyprodukowanej energii są identyczne dla parzystych, jak i nieparzystych miesięcy. Ponieważ trudno wyjaśnić ten fakt naukowo , wygląda na to, że dane dla tego panelu zostały sfałszowane. 
+  * W roku 2013 _panel nr 15_ w sierpniu uległ prawdopodobnie uszkodzeniu, przez co nie wytwarzał energii. Wykres od września dla tego panelu wygląda już prawidłowo.
+  * W tym samym roku kolejne panele mają znacznie wyższy poziom produkcji energii w stosunku do reszty (uwaga ta dotyczy czterech czujników). Również w tym przypadku zachodzi podejrzenie sfałszowanej próbki.
   
