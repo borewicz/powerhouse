@@ -22,7 +22,7 @@ powerhouse <- read.csv("elektrownie.csv", row.names=1)
 powerhouse$data <- as.POSIXct(strptime(powerhouse$data, "%m/%d/%Y %k:%M"))
 powerhouse <- powerhouse %>% mutate(data_month = month(data))
 powerhouse <- powerhouse %>% group_by(idsito, anno, data_month, ora) %>% mutate(kwh = ifelse(kwh == 0, mean(kwh), kwh))
-powerhouse <- powerhouse %>% group_by(idsito, anno, data_month) %>% mutate(irradiamento = ifelse(irradiamento == 0 && kwh > 0, mean(irradiamento), irradiamento))
+powerhouse <- powerhouse %>% group_by(idsito, anno, data_month) %>% mutate(irradiamento = ifelse(irradiamento == 0 & kwh > 0, mean(irradiamento), irradiamento))
 
 set.seed(23)
 ```
@@ -60,6 +60,11 @@ knitr::kable(stats[7:10, ])
 ### Dane pogodowe
 
 Ta grupa zawiera istotne dla modelu predykcji produkcji energii dane o pogodzie. Do dyspozycji są tu informacje o: temperaturze otoczenia, naświetleniu, ciśnieniu powietrza, prędkości wiatru, wilgotności, temperatury punktu rosy, kierunku wiatru oraz zachmurzenia. Obecność atrybutu _icon_ każe przypuszczać, że dane te mogą pochodzić z usługi online udostępniającej informacje o pogodzie - prawdopodobnie przed normalizacją wskazywał na ikonę, którą portal informował o obecnej pogodzie w danym regionie (tym bardziej, że wskazuje ona tylko `r length(table(powerhouse$icon))` różnych wartości). Wyjątkiem jest w tym przypadku nasłonecznienie, gdzie istnieją dwie wartości: jedna może pochodzić z czujnika, a druga z usługi _PVGIS_. Skąd takie rozróżnienie? Czujnik może z czasem przestać działać bądź jego pomiary mogą być zakłócone np. wskutek zabrudzenia.
+
+```{r echo=FALSE,fig.align="center"}
+ggplot(powerhouse, aes(x = kwh, fill = factor(icon*1))) + geom_histogram(bins = 20) + ggtitle("Histogram zmiennej kwh pokolorowany wg. zmiennej icon")
+```
+_Wykres 1. Histogram zmiennej _kwh_ pokolorowany według zmiennej _icon_. Łatwo zauważyć, że niektóre stany pogody występują wyłącznie przy niskiej wartości produkcji energii - prawdopodobnie mogą oznaczać noc albo wysokie zachmurzenie._
 
 ```{r echo=FALSE}
 knitr::kable(stats[c(11,48,12:15,17:19,16), ])
@@ -108,8 +113,8 @@ Kwestia ta była o tyle trudniejsza, że wartości zerowe na właściwości _kwh
 
 Oddzielną kwestią jest zmienna określająca naświetlenie - czasem okazywało się, że mimo zerowego naświetlenia istniała dodatnia wartość _kwh_. W tym przypadku zastosowano nieco podobną metodologię do poprzedniej:
 
-1. Jeżeli wartość _irradiance_ jest niezerowa, należy ją zostawić w spokoju.
-2. Jeżeli wartosć _irradiance_ jest zerowa, należy wyliczyć średnią dla danego czujnika w ciągu danego roku i miesiąca, a następnie umieścić ją w atrybucie _irradiance_.
+1. Jeżeli wartość _irradiamento_ jest niezerowa, należy ją zostawić w spokoju.
+2. Jeżeli wartosć _irradiamento_ jest zerowa, należy wyliczyć średnią dla danego czujnika w ciągu danego roku i miesiąca, a następnie umieścić ją w atrybucie _irradiamento_
 
 ## Korelacja między zmiennymi
 
@@ -119,3 +124,12 @@ cor_table <- cor(powershell_clean)
 corrplot(cor_table, type = "upper", order = "hclust", 
           tl.col = "black", tl.srt = 45)
 ```
+
+_Wykres 2. Korelacja między zmiennymi. Zauważalna silna korelacja między zmienną kwh a zmiennymi oznaczającymi naświetlenie._
+
+W oparciu o powyższy wykres można zauważyć następujące związki:
+
+  * Silna dodania korelacja między atrybutem _kwh_ a właściwościami związanymi z naświetleniem (grupa zmiennych _irradiamento_). Ma to sens, zważywszy na to, że do produkcji energii w panelach słonecznych niezbędna jest energia słoneczna.
+  * Sulna ujemna korelacja między atrybutem _kwh_ a zachmurzeniem (_humidity_). Silne zachmurzenie powoduje, że do paneli dociera mniej światła słonecznego, co równa się niewielkiej liczbie wyprodukowanej energii.
+  * Silna dodatnia korelacja między atrybutem _ora_ (godzina) a azymutem - kąt między kierunkiem północy a kierukiem z którego świeci Słonce róśnie wraz z godziną.
+  
