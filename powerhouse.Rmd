@@ -2,8 +2,14 @@
 title: "Przewidywanie produkcji energii - analiza danych"
 author: "Piotr Kurzawa"
 date: '`r format(Sys.Date(), "%d %B %Y")`'
-output: html_document
+output: 
+  html_document:
+    toc: true
 ---
+
+# Streszczenie
+
+Niniejszy raport ma na celu analizę danych pochodzących z siedemastu czujników umieszczonych przy panelach fotowoltanicznych, które zostały dodatkowo uzupełnione m.in. o dane pogodowe, informacje o lokalizacji czy pozycji Słońca względem czujnika. Ze względu na brakujące wartości w niektórych przypadkach konieczna było ich uzupełnienie w oparciu o średnią z miesiąca bądź niekiedy ich pominięcie w procesie konstrukcji modelu. Zarówno z analizy korelacji atrybutów, jak i tworzenia modelu regresji w oparciu o trzy algorytmy wynika, że największy wpływ na produkcję energii ma ilość promieniowania słonecznego.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -17,33 +23,29 @@ library(reshape2)
 library(lubridate)
 library(gapminder)
 library(gganimate)
+library(caret)
 ```
 
-```{r preparing, cache=FALSE, include=FALSE}
+```{r import, cache=FALSE, include=FALSE}
 powerhouse <- read.csv("elektrownie.csv", row.names=1)
 powerhouse$data <- as.POSIXct(strptime(powerhouse$data, "%m/%d/%Y %k:%M"))
-powerhouse <- powerhouse %>% mutate(data_month = month(data))
-powerhouse <- powerhouse %>% group_by(idsito, anno, data_month, ora) %>% mutate(kwh = ifelse(kwh == 0, mean(kwh), kwh))
-powerhouse <- powerhouse %>% group_by(idsito, anno, data_month) %>% mutate(irradiamento = ifelse(irradiamento == 0 & kwh > 0, mean(irradiamento), irradiamento))
-
-set.seed(23)
 ```
 
-## Wstęp
+# Wstęp
 
 Niniejszy dokument ma na celu analizę danych pochodzacych z czujników umieszczonych przy panelach fotowoltanicznych (krócej mówiąc: słonecznych). Na początku dane te należało przetworzyć pod kątem ewentualnych brakujących/nadmiarowych danych, następnie należało wskazać znaczenie i wagę poszczególnych atrybutów, a także sprawdzić korelację między nimi. Ostatnią częścią projektu było opracowanie regresora przewidującego wytwarzaną energię przez każdy z paneli w ujęciu godzinowym.
 
-## Właściwości zbioru
+# Właściwości zbioru
 
-Zbiór składa się z `r nrow(powerhouse)` wierszy oraz `r ncol(powerhouse)` atrybutów, które można podzielić na następujące grupy:
+Zbiór składa się z `r nrow(powerhouse)` obserwacji oraz `r ncol(powerhouse)` atrybutów, które można podzielić na następujące grupy:
 
 ```{r stats, include=FALSE}
 stats <- t(apply(powerhouse, 2, range))
-stats2 <- t(apply(powerhouse, 2, class))
+# stats2 <- t(apply(powerhouse, 2, class))
 colnames(stats) <- c("min", "max")
 ```
 
-### Informacje o czujniku
+## Informacje o czujniku
 
 Pierwsze atrybuty informują o modelu, marce oraz wieku czujnika. Wartości te są stałe dla każdego z `r length(table(powerhouse$idsito))` różnych czujników (wynika to z liczby różnych wartości atrybutu _idsito_). Czujniki te nie są identyczne - niektóre mają tą samą markę (_idbrand_), ale inny model (_idmodel_). Dodatkowo dostępny jest parametr _ageinmonths_, wskazujący na wiek urządzenia w miesiącach. Każdy z atrybutów został znormalizowany do przedziału <0, 1>, przy czym prawie żaden z atrybutów nie osiąga wartości maksymalnej - co może wskazywać, że czujników było więcej lub został użyty nietypowy algorytm normalizacji (np. dla łańcuchów znaków). Odstępstwem od tej reguły jest wiek urządzenia, który zapewne został znormalizowany z typu numerycznego.
    
@@ -51,7 +53,7 @@ Pierwsze atrybuty informują o modelu, marce oraz wieku czujnika. Wartości te s
 knitr::kable(stats[c(1:3,6), ])
 ```
 
-### Data wykonania pomiaru
+## Data wykonania pomiaru
 
 Kolejna grupa atrybutów zawiera informacje o czasie wykonania pomiaru. Atrybut _anno_ jest typu _numeric_ i przyjmuje tylko wartości 2012 oraz 2013. Parametr _day_ określa dzień roku i przyjmuje `r length(table(powerhouse$day))` różnych wartości, natomiast _ora_ oznacza godzinę wykonania pomiaru. Pomiary wykonywane są co godzinę, `r length(table(powerhouse$ora))` razy na dobę, co sugeruje zarówno zmienna _ora_, jak i pole _data_ będące łańcuchem (typ _factor_) wskazującym datę i godzinę pomiaru w formacie przystępnym dla przeciętnego zjadacza chleba. Pozostałe wartości zostały znormalizowane do przedziału <0, 1>.
 
@@ -59,12 +61,12 @@ Kolejna grupa atrybutów zawiera informacje o czasie wykonania pomiaru. Atrybut 
 knitr::kable(stats[7:10, ])
 ```
 
-### Dane pogodowe
+## Dane pogodowe
 
 Ta grupa zawiera istotne dla modelu predykcji produkcji energii dane o pogodzie. Do dyspozycji są tu informacje o: temperaturze otoczenia, naświetleniu, ciśnieniu powietrza, prędkości wiatru, wilgotności, temperatury punktu rosy, kierunku wiatru oraz zachmurzenia. Obecność atrybutu _icon_ każe przypuszczać, że dane te mogą pochodzić z usługi online udostępniającej informacje o pogodzie - prawdopodobnie przed normalizacją wskazywał na ikonę, którą portal informował o obecnej pogodzie w danym regionie (tym bardziej, że wskazuje ona tylko `r length(table(powerhouse$icon))` różnych wartości). Wyjątkiem jest w tym przypadku nasłonecznienie, gdzie istnieją dwie wartości: jedna może pochodzić z czujnika, a druga z usługi _PVGIS_. Skąd takie rozróżnienie? Czujnik może z czasem przestać działać bądź jego pomiary mogą być zakłócone np. wskutek zabrudzenia.
 
 ```{r echo=FALSE,fig.align="center"}
-ggplot(powerhouse, aes(x = kwh, fill = factor(icon*1))) + geom_histogram(bins = 20) + ggtitle("Histogram zmiennej kwh pokolorowany wg. zmiennej icon")
+ggplot(powerhouse, aes(x = kwh, fill = factor(icon*1, labels = c(1:7)))) + geom_histogram(bins = 20) + ggtitle("Histogram zmiennej kwh pokolorowany wg. zmiennej icon") + scale_fill_discrete(name = "Stan pogody")
 ```
 _Wykres 1. Histogram zmiennej _kwh_ pokolorowany według zmiennej _icon_. Łatwo zauważyć, że niektóre stany pogody występują wyłącznie przy niskiej wartości produkcji energii - prawdopodobnie mogą oznaczać noc albo wysokie zachmurzenie._
 
@@ -72,7 +74,7 @@ _Wykres 1. Histogram zmiennej _kwh_ pokolorowany według zmiennej _icon_. Łatwo
 knitr::kable(stats[c(11,48,12:15,17:19,16), ])
 ```
 
-### Lokalizacja, azymut i wysokość bezwzględna
+## Lokalizacja, azymut i wysokość bezwzględna
 
 Oprócz standardowych właściwości takich jak długość (_lon_) i szerokość (_lat_) mamy tutaj rzadziej spotykane atrybuty przydatne w lokalizowaniu miejsca działania każdego z czujników. Zmienna _azimuth_ określa tzw. azymut, czyli kąt między pomiędzy południkiem a  wskazanym kierunkiem poziomym, z kolei _altitude_ to zwyczajna wysokość bezględna określająca wysokość nad poziomem morza. Oba atrybuty pozwalają na ustalenie pozycji słońca względem czujnika. 
 
@@ -80,7 +82,7 @@ Oprócz standardowych właściwości takich jak długość (_lon_) i szerokość
 knitr::kable(stats[c(4:5, 29:30), ])
 ```
 
-### Wektor PCNM
+## Wektor PCNM
 
 Nazwa atrybutów w tej grupie wskazuje na ich występowanie jako argumenty algorytmu analizy współrzędnych głównych macierzy sąsiedztwa (ang. _principal coordinate analysis of neighbour_, w skrócie _PCNM_). Technika ta umożliwia rozwiązanie problemu autokorelacji przestrzennej wywołanej bliskością czujników, co jest niepożądane w przypadku tworzenia modelu predykcji produkcji energii. Przy takim założeniu wartości atrybutu stanowią tzw. wektory własne opisujące przestrzeń, obliczone na podstawie macierzy odległości między panelami.
 
@@ -88,7 +90,7 @@ Nazwa atrybutów w tej grupie wskazuje na ich występowanie jako argumenty algor
 knitr::kable(stats[33:47, ])
 ```
 
-### LISA
+## LISA
 
 Ta grupa atrybutów zawiera atrybuty podobne do tych z danych pogodowych oraz lokalizacji (oprócz właściwości _icon_), jednak z dodatkowym oznaczeniem _i_. Litera ta, przy jednoczesnym występowaniu wektora PCNM, może wskazywać na użycie algorytmu LISA (ang. _Local Indicator of Spatial Association_) obliczające na podstawie wektora własnego PCNM lokalne statystyki, wolne od problemu autokorelacji przestrzennej.
 
@@ -96,7 +98,7 @@ Ta grupa atrybutów zawiera atrybuty podobne do tych z danych pogodowych oraz lo
 knitr::kable(stats[c(20:27, 31:32, 49), ])
 ```
 
-### Ilość energii wytworzonej oraz _dist_
+## Ilość energii wytworzonej oraz _dist_
 
 Ostatnim atrybutem jest zmienna wskazująca na ilość wytworzonej energii. Nie wiadomo jednak, czy jest to wartość pochodząca z czujnika, czy wartość wyliczona na podstawie modelu predykcji, na co wskazują inne kolumny występujace w zbiorze (wtedy zbiór możnaby określić zbiorem uczącym np. sieć neuronową). Opcja druga jest bardziej prawdopodobna, jeżeli spojrzymy na zmienną _dist_ - ponieważ wartość ta ma dużo większą dokładność niż pozostałe atrybuty w zbiorze, prawdopodobnie jest obliczana na podstawie danych z tego zbioru. Najprawdopodobnie więc wartość jest formą jakiejś statystyki wykorzystywanej przez model predykcji, zwiększającej jakość predykcji. 
 
@@ -104,7 +106,15 @@ Ostatnim atrybutem jest zmienna wskazująca na ilość wytworzonej energii. Nie 
 knitr::kable(stats[c(28,50), ])
 ```
 
-## Przygotowanie danych 
+# Przygotowanie danych 
+
+```{r preparing,echo=FALSE}
+powerhouse <- powerhouse %>% mutate(data_month = month(data))
+powerhouse <- powerhouse %>% group_by(idsito, anno, data_month, ora) %>% mutate(kwh = ifelse(kwh == 0, mean(kwh), kwh))
+powerhouse <- powerhouse %>% group_by(idsito, anno, data_month) %>% mutate(irradiamento = ifelse(irradiamento == 0 & kwh > 0, mean(irradiamento), irradiamento))
+
+set.seed(23)
+```
 
 W trakcie testów okazało się, że w wielu przypadkach wystepowały wartości zerowe na atrybutach potencjalne ważnych dla późniejszej analizy i tworzenia regresora - mowa tu mianowicie o atrybutach _kwh_ oraz _irradiamento_ (naświetlenie). Aby zapewnić, że analiza przebiegnie prawidłowo, brakujące wartości należało uzupełnić.
 
@@ -118,35 +128,79 @@ Oddzielną kwestią jest zmienna określająca naświetlenie - czasem okazywało
 1. Jeżeli wartość _irradiamento_ jest niezerowa, należy ją zostawić w spokoju.
 2. Jeżeli wartosć _irradiamento_ jest zerowa, należy wyliczyć średnią dla danego czujnika w ciągu danego roku i miesiąca, a następnie umieścić ją w atrybucie _irradiamento_
 
-## Korelacja między zmiennymi
+# Korelacja między zmiennymi
 
 ```{r corr,echo=FALSE,fig.width=20,fig.height=15}
-powershell_clean <- select(powerhouse, -data)
-cor_table <- cor(powershell_clean)
+cor_table <- cor(powerhouse %>% select(-data))
 corrplot(cor_table, type = "upper", order = "hclust", 
           tl.col = "black", tl.srt = 45)
 ```
 
-_Wykres 2. Korelacja między zmiennymi. Zauważalna silna korelacja między zmienną kwh a zmiennymi oznaczającymi naświetlenie._
+_Wykres 2. Korelacja między zmiennymi (bez zmiennej daty)._
 
 W oparciu o powyższy wykres można zauważyć następujące związki:
 
   * Silna dodania korelacja między atrybutem _kwh_ a właściwościami związanymi z naświetleniem (grupa zmiennych _irradiamento_). Ma to sens, zważywszy na to, że do produkcji energii w panelach słonecznych niezbędna jest energia słoneczna.
-  <!-- * Silna ujemna korelacja między atrybutem _kwh_ a zachmurzeniem (_humidity_). Silne zachmurzenie powoduje, że do paneli dociera mniej światła słonecznego, co równa się niewielkiej liczbie wyprodukowanej energii. -->
-  * Silna dodatnia korelacja między atrybutem _ora_ (godzina) a azymutem - kąt między kierunkiem północy a kierukiem z którego świeci Słonce rośnie wraz z godziną.
+  * Silna ujemna korelacja między atrybutem _kwh_ a zachmurzeniem (_humidity_). Silne zachmurzenie powoduje, że do paneli dociera mniej światła słonecznego, co równa się niewielkiej liczbie wyprodukowanej energii.
+  * Silna dodatnia korelacja między atrybutem _ora_ (godzina) a azymutem - kąt między kierunkiem północy a kierunkiem z którego świeci Słonce rośnie wraz z godziną.
   
-### Wykres wytwarzania energii w zależności od czasu i lokalizacji czujnika
+# Wykres wytwarzania energii w zależności od czasu i lokalizacji czujnika
 
-```{r total_fig,echo=FALSE,fig.show='animate'}
+```{r total_fig,echo=FALSE,fig.show='animate',fig.align="center"}
 anim <- ggplot(powerhouse %>% group_by(idsito, anno, data_month) %>% summarise(kwh_sum = sum(kwh)), aes(x = data_month, y = kwh_sum, color = factor(1*idsito, labels=c(1:17)), frame = anno)) + geom_line() + scale_color_discrete(name = "Panel")
 gganimate(anim)
 ```
 
-_Wykres 3. _
+_Wykres 3. Animowany wykres wytwarzania energii dla 2012 i 2013 roku (kliknij, aby przerwać animację)_
 
 Powyższy wykres przedstawia sumę wyprodukowanej energii w ciągu miesiąca przez każdy z zainstalowanych paneli. Na jego podstawie można dojść do ciekawych wniosków:
 
-  * Na wykresie z roku 2012 _panel nr 12_ wykazuje dużą produkcję energii w stosunku do reszty paneli. Jeżeli przyjrzeć się dokładniej, od sierpnia sumy wyprodukowanej energii są identyczne dla parzystych, jak i nieparzystych miesięcy. Ponieważ trudno wyjaśnić ten fakt naukowo , wygląda na to, że dane dla tego panelu zostały sfałszowane. 
+  * Na wykresie z roku 2012 _panel nr 10_ wykazuje dużą produkcję energii w stosunku do reszty paneli. Jeżeli przyjrzeć się dokładniej, od sierpnia sumy wyprodukowanej energii są identyczne dla parzystych, jak i nieparzystych miesięcy oraz tworzą tzw. "zygzak". Ponieważ trudno wyjaśnić ten fakt naukowo, wygląda na to, że dane dla tego panelu zostały sfałszowane. 
   * W roku 2013 _panel nr 15_ w sierpniu uległ prawdopodobnie uszkodzeniu, przez co nie wytwarzał energii. Wykres od września dla tego panelu wygląda już prawidłowo.
-  * W tym samym roku kolejne panele mają znacznie wyższy poziom produkcji energii w stosunku do reszty (uwaga ta dotyczy czterech czujników). Również w tym przypadku zachodzi podejrzenie sfałszowanej próbki.
+  * W tym samym roku kolejne panele mają sporo wyższy poziom produkcji energii w stosunku do reszty (uwaga ta dotyczy czujników nr 5, 6, 7 oraz ponownie 10). Również w tym przypadku tworzy się znajomy "zygzak", przez co zachodzi podejrzenie sfałszowanej próbki.
   
+# Schemat modelu uczenia oraz regresor
+
+Jako model został użyty schemat _10-fold cross-validation + holdout_. Polega on na podzieleniu zbioru na dwa zbiory: uczący (80% próbek) oraz testowy (20% próbek), a następnie podzielenie zbioru uczącego wg. powtórzonej walidacji krzyżowej. Zbiór ten dzielony jest na 10 podzbiorów. Następnie następuje 10 tur analizy, podczas której każdy z podzbiorów w swojej turze staje się zbiorem walidującym, a pozostałe - uczącym. Dodatkowo dokonano optymalizacji parametrów - zastosowano dodatkowe skalowanie i centrowanie danych (co zmniejszało błąd średniokwadratowy, szczególnie w przypadku _Partial Least Squares_)
+
+Do porównania zostały wybrane następujące algorytmy regresji:
+
+* Linear Regression
+* Stochastic Gradient Boosting
+* Partial Least Squares
+
+```{r cleaning,echo=FALSE}
+powerhouse$idsito <- factor(powerhouse$idsito, labels=c(1:length(table(powerhouse$idsito))))
+powerhouse <- powerhouse %>% filter(!idsito %in% c(5:7,10))
+```
+
+Przed stworzeniem regresora należało wyciąć ze zbioru próbki, które mogłyby potencjalnie zakłócić budowanie regresora. Dlatego też ze zbioru zostały usunięte wszystkie dane dotyczące paneli, których czujniki wykazywały nadmiernie optymistyczne wskazania w stosunku do reszty (opisane w poprzednim rozdziale).
+
+```{r dataPartition,echo=FALSE,warning=FALSE,error=FALSE}
+inTraining <- createDataPartition(y = powerhouse$kwh, p = .8, list = FALSE)
+trainingSet <- powerhouse[inTraining, ]
+testingSet <- powerhouse[-inTraining, ]
+ctrl <- trainControl(method = "repeatedcv", number = 10, preProcOptions = c("center", "scale"))
+
+fit_lm <- train(kwh ~ ., data = trainingSet, method = "lm", trControl = ctrl)
+fit_gbm <- train(kwh ~ ., data = trainingSet, method = "gbm", trControl = ctrl)
+fit_pls <- train(kwh ~ ., data = trainingSet, method = "kernelpls", trControl = ctrl)
+
+rmse_results <- c("PLS" = min(fit_pls$results$RMSE), "LM" = min(fit_lm$results$RMSE), "GBM" = min(fit_gbm$results$RMSE))
+knitr::kable(rmse_results, col.names = c("RMSE"))
+```
+Z powyższych modeli najlepszym okazał się ten wykorzystujący _Stochastic Gradient Boosting_ - osiągnął najmniejszy błąd średniokwadratowy spośród wszystkich wykorzystanych algorytmów. Okupione jest to niestety znacznie dłuższym czasem obliczeń.
+
+Należy pamiętać, że powyższe algorytmy wykorzystują regresję liniową. Istnieje wiele innych algorytmów wykorzystujący drzewa (np. _Random Forest_), a także sieci neuronowe (_Feed Forward Neural Network_), które w praktyce często okazują się lepsze niż te wykorzystujące regresję.
+
+# Ważność atrybutów dla modelu SGB
+
+```{r variables,echo=FALSE}
+varImp(fit_gbm)
+```
+
+Spośród wszystkich atrybutów biorących udział w analizie największą ważność miały zmienne określające promieniowanie Słońca - z właściwością _irradiamento_ oraz _irr_pvgis_mod_ na czele. Pierwszą zmienna niebędąca wskaźnikiem nasłoniecznienia (_azimuth_) miała 25-krotnie mniejszą ważność, a większość atrybutów osiągnęła dziesięciokrotnie mniejszą ważność. Nie dziwi z kolei niska ważność atrybutu _humidity_, szczególnie w kontekście stwierdzonej ujemnej korelacji między nimi.
+
+Warto w tym miejscu wspomnieć o algorytmie _PLS_ oraz _LM_, gdzie właściwość zachmurzenia ma "tylko" dwukrotnie mniejszą ważność niż nasłoniecznienie. W przypadku "prostszych" algorytmów różnice między atrybutami są sporo mniejsze, co może prowadzić do niepoprawnych wniosków. Warto więc przeprowadzać testy w oparciu o wiele modeli regresji.
+
+
